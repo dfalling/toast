@@ -24,6 +24,9 @@ export default {
     // Set up flash message close buttons
     this.setupFlashMessageHandlers();
 
+    // Set up delegated close/action handling (survives stream re-patches)
+    this.setupToastActionDelegation();
+
     this.el.addEventListener("mouseenter", () => {
       this.expanded = true;
       this.updateToasts();
@@ -278,36 +281,47 @@ export default {
       }, 2000); // Shorter duration after interaction
     });
 
+    // NOTE: close-button and action-button clicks are handled by delegation in
+    // setupToastActionDelegation() rather than per-toast listeners here, so they
+    // keep working after LiveView re-patches a toast's DOM node.
+  },
 
-    // Handle close button
-    const closeBtn = toastEl.querySelector('[data-close-toast]');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
+  setupToastActionDelegation() {
+    // A single delegated click handler on the hook root. Because it is bound
+    // once to a stable element, it survives every stream re-patch — unlike
+    // direct per-toast listeners, which are lost whenever morphdom re-creates a
+    // toast node (the cause of "sometimes the buttons do nothing").
+    this.el.addEventListener("click", (e) => {
+      const closeBtn = e.target.closest('[data-close-toast]');
+      if (closeBtn && this.el.contains(closeBtn)) {
         e.preventDefault();
         e.stopPropagation();
 
-        // Clear any active timer
-        if (toastInfo.timer) {
+        const toastEl = closeBtn.closest('.toast');
+        if (!toastEl) return;
+
+        // Clear any active auto-removal timer for this toast
+        const toastInfo = this.toasts.get(toastEl.parentElement && toastEl.parentElement.id);
+        if (toastInfo && toastInfo.timer) {
           clearTimeout(toastInfo.timer);
           toastInfo.timer = null;
         }
 
         const toastId = toastEl.dataset.toastId;
-        this.removeToastFromServer(toastId);
-      });
-    }
+        if (toastId) this.removeToastFromServer(toastId);
+        return;
+      }
 
-    // Handle action button
-    const actionBtn = toastEl.querySelector('[data-toast-action]');
-    if (actionBtn) {
-      actionBtn.addEventListener('click', () => {
-        const toastId = toastEl.dataset.toastId;
+      const actionBtn = e.target.closest('[data-toast-action]');
+      if (actionBtn && this.el.contains(actionBtn)) {
+        const toastEl = actionBtn.closest('.toast');
+        const toastId = toastEl && toastEl.dataset.toastId;
         this.pushEventTo(this.el, "action", {
           toast_id: toastId,
           action: actionBtn.dataset.toastAction
         });
-      });
-    }
+      }
+    });
   },
 
   removeToast(domId) {
